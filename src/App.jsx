@@ -118,7 +118,8 @@ function App() {
     { id: 26, title: 'Ride Bicycle', points: 15, description: 'Ride bicycle for exercise.', completedDates: [] },
     { id: 27, title: 'Do Meditation', points: 10, description: 'Practice meditation for 10 minutes.', completedDates: [] },
     { id: 22, title: 'Help In The Kitchen', points: 10, description: 'Assist with cooking or cleaning.', completedDates: [] },
-    { id: 28, title: 'Do 3 MashUp Puzzles', points: 10, description: 'Do 3 MashUp Puzzles.', completedDates: [] }
+    { id: 28, title: 'Do 3 MashUp Puzzles', points: 10, description: 'Do 3 MashUp Puzzles.', completedDates: [] },
+    { id: 29, title: 'Do Japa Chanting', points: 15, description: 'Practice japa chanting meditation for spiritual growth.', completedDates: [] }
   ]
 
   // Generate stable incremental IDs stored in localStorage
