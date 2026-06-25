@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 
 function toISODate(date) {
   const year = date.getFullYear()
@@ -84,11 +84,6 @@ function App() {
   // Bigger game state (grow a box by clicking)
   const [biggerSize, setBiggerSize] = useState(60)
   const [biggerScore, setBiggerScore] = useState(0)
-  // Embed URL for external games
-  const [embedUrl, setEmbedUrl] = useState('')
-  const catchTheAppleRef = useRef(null)
-  const snakeRef = useRef(null)
-  const chessRef = useRef(null)
 
   const getDefaultTasks = () => [
     { id: 1, title: 'Water The Plants', points: 5, description: 'Give the plants a good drink.', completedDates: [] },
@@ -367,14 +362,6 @@ function App() {
     setTictacToeWinner(null)
   }
 
-  const enterFullscreen = ref => {
-    if (!ref?.current) return
-    const el = ref.current
-    if (el.requestFullscreen) el.requestFullscreen()
-    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen()
-    else if (el.msRequestFullscreen) el.msRequestFullscreen()
-  }
-
   const conversionRate = 100 // 100 points = $1
   const pointsEarned = tasks.reduce((sum, t) => (isDone(t, date) ? sum + (t.points || 0) : sum), 0)
   const totalPoints = tasks.reduce((sum, t) => sum + (Array.isArray(t.completedDates) ? t.completedDates.length * (t.points || 0) : 0), 0)
@@ -586,101 +573,58 @@ function App() {
           </>
         )}
 
-        {/* Games Tab: replaced with user-provided embeds */}
+        {/* Games Tab: link out to play on the website (embedding not supported) */}
         {activeTab === 'games' && (
           <div>
             <div className="section-title" style={{ marginBottom: '1rem' }}>🎮 Games</div>
-            <div className="muted" style={{ marginBottom: '0.5rem' }}>Embedded games (from provided URLs)</div>
+            <div className="muted" style={{ marginBottom: '0.5rem' }}>Unlock a game with 50 points, then open it on the website to play.</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem' }}>
-              {/* Embed 1 */}
-              <div className="card" style={{ padding: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <div style={{ fontWeight: 'bold' }}>Catch the Apple</div>
-                  {unlockedGames['Catch the Apple'] && (
-                    <button className="btn btn-muted" style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }} onClick={() => enterFullscreen(catchTheAppleRef)}>
-                      Fullscreen
-                    </button>
+              {[
+                { name: 'Make a House', emoji: '🏠', url: 'https://www.abcya.com/games/make-a-house' },
+                { name: 'Punctuation & Capitalization', emoji: '✏️', url: 'https://www.abcya.com/games/fun-factory-punctuation-capitalization' },
+                { name: 'Lineum', emoji: '📐', url: 'https://www.abcya.com/games/lineum' },
+                { name: 'Addition', emoji: '➕', url: 'https://www.abcya.com/games/addition' },
+                { name: 'Estimating', emoji: '🔢', url: 'https://www.abcya.com/games/estimating' },
+                { name: 'Build a Boat', emoji: '⛵', url: 'https://pbskids.org/games/play/build-a-boat/1283064' },
+                { name: 'Stargazing', emoji: '🔭', url: 'https://pbskids.org/games/play/stargazing/1670899' },
+                { name: 'My Bedtime', emoji: '🌙', url: 'https://pbskids.org/games/play/my-bedtime/8513' },
+                { name: 'At the Dentist', emoji: '🦷', url: 'https://pbskids.org/games/play/at-the-dentist/836628' },
+                { name: 'Backyard Bug Hunt', emoji: '🐞', url: 'https://pbskids.org/games/play/backyard-bug-hunt/1216876' },
+                { name: 'Ramp Racers', emoji: '🏎️', url: 'https://pbskids.org/games/play/ramp-racers/140182' },
+              ].map(game => (
+                <div key={game.name} className="card" style={{ padding: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <div style={{ fontWeight: 'bold' }}>{game.emoji} {game.name}</div>
+                  </div>
+                  {unlockedGames[game.name] ? (
+                    <div>
+                      <div className="muted" style={{ marginBottom: '0.5rem' }}>Unlocked — opens in a new tab.</div>
+                      <a
+                        href={game.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn btn-success"
+                        style={{ display: 'block', width: '100%', textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}
+                      >
+                        ▶ Play on website
+                      </a>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="muted" style={{ marginBottom: '0.5rem' }}>Locked — redeem 50 points to unlock this game.</div>
+                      <button
+                        className="btn btn-success"
+                        style={{ width: '100%', cursor: availablePoints < 50 ? 'not-allowed' : 'pointer' }}
+                        onClick={() => redeemPointsForGame(game.name)}
+                        disabled={availablePoints < 50}
+                        title={availablePoints < 50 ? 'Need 50 available points to unlock' : 'Unlock for 50 pts'}
+                      >
+                        Unlock for 50 pts
+                      </button>
+                    </div>
                   )}
                 </div>
-                {unlockedGames['Catch the Apple'] ? (
-                  <div style={{ border: '1px solid #ddd', padding: '0.5rem', borderRadius: '6px' }}>
-                    <iframe ref={catchTheAppleRef} src="https://scratch.mit.edu/projects/477886605/embed" title="Catch the Apple" allowtransparency="true" width="485" height="402" frameBorder="0" scrolling="no" allowFullScreen style={{ width: '100%', height: '420px', border: 'none' }} />
-                  </div>
-                ) : (
-                  <div>
-                    <div className="muted" style={{ marginBottom: '0.5rem' }}>Locked — redeem 50 points to unlock this game.</div>
-                    <button
-                      className="btn btn-success"
-                      style={{ width: '100%', cursor: availablePoints < 50 ? 'not-allowed' : 'pointer' }}
-                      onClick={() => redeemPointsForGame('Catch the Apple')}
-                      disabled={availablePoints < 50}
-                      title={availablePoints < 50 ? 'Need 50 available points to unlock' : 'Unlock for 50 pts'}
-                    >
-                      Unlock for 50 pts
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Embed 2 */}
-              <div className="card" style={{ padding: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <div style={{ fontWeight: 'bold' }}>Snake!</div>
-                  {unlockedGames['Snake!'] && (
-                    <button className="btn btn-muted" style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }} onClick={() => enterFullscreen(snakeRef)}>
-                      Fullscreen
-                    </button>
-                  )}
-                </div>
-                {unlockedGames['Snake!'] ? (
-                  <div style={{ border: '1px solid #ddd', padding: '0.5rem', borderRadius: '6px' }}>
-                    <iframe ref={snakeRef} src="https://scratch.mit.edu/projects/226445813/embed" title="Snake!" allowtransparency="true" width="485" height="402" frameBorder="0" scrolling="no" allowFullScreen style={{ width: '100%', height: '420px', border: 'none' }} />
-                  </div>
-                ) : (
-                  <div>
-                    <div className="muted" style={{ marginBottom: '0.5rem' }}>Locked — redeem 50 points to unlock this game.</div>
-                    <button
-                      className="btn btn-success"
-                      style={{ width: '100%', cursor: availablePoints < 50 ? 'not-allowed' : 'pointer' }}
-                      onClick={() => redeemPointsForGame('Snake!')}
-                      disabled={availablePoints < 50}
-                      title={availablePoints < 50 ? 'Need 50 available points to unlock' : 'Unlock for 50 pts'}
-                    >
-                      Unlock for 50 pts
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Embed 3 */}
-              <div className="card" style={{ padding: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <div style={{ fontWeight: 'bold' }}>Chess Game</div>
-                  {unlockedGames['Chess Game'] && (
-                    <button className="btn btn-muted" style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }} onClick={() => enterFullscreen(chessRef)}>
-                      Fullscreen
-                    </button>
-                  )}
-                </div>
-                {unlockedGames['Chess Game'] ? (
-                  <div style={{ border: '1px solid #ddd', padding: '0.5rem', borderRadius: '6px' }}>
-                    <iframe ref={chessRef} src="https://scratch.mit.edu/projects/148769358/embed" title="Chess Game" allowtransparency="true" width="485" height="402" frameBorder="0" scrolling="no" allowFullScreen style={{ width: '100%', height: '420px', border: 'none' }} />
-                  </div>
-                ) : (
-                  <div>
-                    <div className="muted" style={{ marginBottom: '0.5rem' }}>Locked — redeem 50 points to unlock this game.</div>
-                    <button
-                      className="btn btn-success"
-                      style={{ width: '100%', cursor: availablePoints < 50 ? 'not-allowed' : 'pointer' }}
-                      onClick={() => redeemPointsForGame('Chess Game')}
-                      disabled={availablePoints < 50}
-                      title={availablePoints < 50 ? 'Need 50 available points to unlock' : 'Unlock for 50 pts'}
-                    >
-                      Unlock for 50 pts
-                    </button>
-                  </div>
-                )}
-              </div>
+              ))}
             </div>
           </div>
         )}
