@@ -88,18 +88,19 @@ function App() {
   const [embedUrl, setEmbedUrl] = useState('')
   const catchTheAppleRef = useRef(null)
   const snakeRef = useRef(null)
+  const chessRef = useRef(null)
 
   const getDefaultTasks = () => [
     { id: 1, title: 'Water The Plants', points: 5, description: 'Give the plants a good drink.', completedDates: [] },
     { id: 2, title: 'Drink 3 Bottles Of Water', points: 5, description: 'Stay hydrated all day.', completedDates: [] },
-    { id: 23, title: 'Brush Twice Daily', points: 5, description: 'Brush teeth twice daily, morning and night.', completedDates: [] },
+    { id: 23, title: 'Brush Twice Daily', points: 5, description: 'Brush teeth Admorning and night.', completedDates: [] },
     { id: 3, title: 'Do Yoga', points: 5, description: 'Stretch, breathe and relax with yoga.', completedDates: [] },
     { id: 28, title: 'Read 5 Pages in a book', points: 5, description: 'Read 3-5 pages from a book.', parentPresence: true, completedDates: [] },
     { id: 4, title: 'Do Piano', points: 5, description: 'Practice piano pieces and scales.', completedDates: [] },
-    { id: 5, title: 'Practice 1 Music Song', points: 5, description: 'Practice one music song to improve voice and rhythm.', parentPresence: true, completedDates: [] },
-    { id: 6, title: 'Chant 1 Bhagavad Gita Sloka', points: 5, description: 'Chant 1 Bhagavad-gita sloka for daily practice.', parentPresence: true, completedDates: [] },
-    { id: 7, title: 'Chant 2 Prajna Prayers', points: 5, description: 'Chant 2 Prajna prayers for daily practice.', parentPresence: true, completedDates: [] },
-    { id: 8, title: 'Do 3x3 Cube', points: 5, description: 'Practice 3x3 cube speed solving.', completedDates: [] },
+    { id: 5, title: 'Practice 1 Music Song', points: 5, description: 'Practice 1 song to improve voice.', parentPresence: true, completedDates: [] },
+    { id: 6, title: 'Chant 1 Bhagavad Gita Sloka', points: 5, description: 'Chant 1 Bhagavad-gita sloka.', parentPresence: true, completedDates: [] },
+    { id: 7, title: 'Chant 2 Prajna Prayers', points: 5, description: 'Chant 2 Prajna prayers.', parentPresence: true, completedDates: [] },
+    { id: 8, title: 'Do 3x3 Cube', points: 3, description: 'Practice 3x3 cube speed solving.', completedDates: [] },
     { id: 9, title: 'Do 4x4 Cube', points: 5, description: 'Practice 4x4 cube solving.', completedDates: [] },
     { id: 10, title: 'Do Maths Worksheet', points: 5, description: 'Finish one maths worksheet.', completedDates: [] },
     { id: 11, title: 'Do Xtra Math', points: 5, description: 'Solve Xtra maths questions.', completedDates: [] },
@@ -114,13 +115,13 @@ function App() {
     { id: 20, title: 'Play Basketball', points: 5, description: 'Play a fun sport session.', completedDates: [] },
     { id: 21, title: 'Play Badminton', points: 5, description: 'Play a fun sport session.', parentPresence: true, completedDates: [] },
     { id: 24, title: 'Practice Dance', points: 5, description: 'Practice dance routine or exercises.', parentPresence: true, completedDates: [] },
-    { id: 25, title: 'Go For A Walk', points: 5, description: 'Go for a walk outside for exercise and fresh air.', parentPresence: true, completedDates: [] },
+    { id: 25, title: 'Go For A Walk', points: 5, description: 'Go for a walk outside for fresh air.', parentPresence: true, completedDates: [] },
     { id: 26, title: 'Ride Bicycle', points: 5, description: 'Ride bicycle for exercise.', parentPresence: true, completedDates: [] },
     { id: 27, title: 'Do Meditation', points: 5, description: 'Practice meditation for 10 minutes.', completedDates: [] },
     { id: 22, title: 'Help In The Kitchen', points: 5, description: 'Assist with cooking or cleaning.', parentPresence: true, completedDates: [] },
     { id: 31, title: 'Do 3 MashUp Puzzles', points: 5, description: 'Do 3 MashUp Puzzles.', parentPresence: true, completedDates: [] },
-    { id: 29, title: 'Do Japa Chanting', points: 5, description: 'Practice japa chanting meditation for spiritual growth.', completedDates: [] },
-    { id: 30, title: 'Feed Food To Fish', points: 5, description: 'Feed food to the fish.', completedDates: [] }
+    { id: 29, title: 'Do Japa Chanting', points: 5, description: 'Do japa chanting for spiritual growth.', completedDates: [] },
+    { id: 30, title: 'Feed Food To Fish', points: 2, description: 'Feed food to the fish.', completedDates: [] }
   ]
 
   // Generate stable incremental IDs stored in localStorage
@@ -165,9 +166,17 @@ function App() {
       try {
         const parsed = JSON.parse(stored)
         if (Array.isArray(parsed)) {
-          // merge defaults that are missing by id without overwriting user data
+          // Reconcile on load: definition fields (title/description/points/parentPresence)
+          // always come from code defaults, while tracking (completedDates) is kept from
+          // storage. Matched by stable `id`, so editing task text redeploys to all devices
+          // without losing completion history.
           const merged = [
-            ...parsed,
+            ...parsed.map(p => {
+              const def = defaults.find(d => d.id === p.id)
+              return def
+                ? { ...def, completedDates: p.completedDates ?? [], done: p.done }
+                : p // custom task not in defaults — leave untouched
+            }),
             ...defaults.filter(d => !parsed.some(p => p.id === d.id))
           ]
           setTasks(merged)
@@ -374,67 +383,55 @@ function App() {
   const todaysCash = (pointsEarned / conversionRate).toFixed(2)
   const totalCash = (totalPoints / conversionRate).toFixed(2)
 
+  // Aggregate total points earned per day across all tasks (for the Report chart)
+  const dailyPointsMap = {}
+  tasks.forEach(t => {
+    (t.completedDates || []).forEach(d => {
+      dailyPointsMap[d] = (dailyPointsMap[d] || 0) + (t.points || 0)
+    })
+  })
+  const dailyPoints = Object.keys(dailyPointsMap)
+    .sort()
+    .map(d => ({ date: d, points: dailyPointsMap[d] }))
+  const maxDailyPoints = dailyPoints.reduce((m, d) => Math.max(m, d.points), 0)
+
   return (
     <div className="container">
       <div className="sticky-panel">
         <div className="hero">
-          <div>
-            <h1>Bujjamma Daily Tasks Tracker</h1>
-            <p className="muted">Choose a date, complete your tasks, and earn points for every good action.</p>
-          </div>
-          <div className="score-card score-line">
-            <div>
-              <div className="muted">Today's score</div>
-              <div className="score">{pointsEarned} pts</div>
+          <div className="hero-top">
+            <div className="hero-title">
+              <h1>Bujjamma Daily Tasks Tracker</h1>
+              <p className="muted">Choose a date, complete your tasks, and earn points for every good action.</p>
             </div>
-            <div>
-              <div className="muted">Total points earned</div>
-              <div className="score" style={{ fontSize: '1.25rem' }}>{totalPoints} pts</div>
-            </div>
-            <div>
-              <div className="muted">Points redeemed</div>
-              <div className="score" style={{ fontSize: '1.25rem', color: '#FF9800' }}>{spentPoints} pts</div>
-            </div>
-            <div>
-              <div className="muted">Available balance</div>
-              <div className="score" style={{ fontSize: '1.25rem', color: '#4CAF50' }}>{totalPoints - spentPoints} pts</div>
-            </div>
-          </div>
-        </div>
 
-        <div className="card card-top">
-          <div className="card-header">
-            <div>
-              <div className="section-title">Daily Task List</div>
-              <div className="muted">{completedCount} of {tasks.length} tasks completed</div>
-            </div>
-            <button className="btn btn-danger btn-reset-today" onClick={resetAllForDate}>Reset Today Tasks</button>
-          </div>
-
-          <div className="calendar-section">
-            <div className="date-nav">
-              <button className="date-btn" onClick={() => setDate(addDays(weekStart(date), -7))}>Previous week</button>
-              <div className="date-pills">
-                {weekDates(date).map(day => (
-                  <button
-                    key={day}
-                    className={`date-pill ${day === date ? 'active' : ''}`}
-                    onClick={() => setDate(day)}
-                  >
-                    <span className="date-pill-day">{formatDateDay(day)}</span>
-                    <span className="date-pill-date">{formatDateMonthDay(day)}</span>
-                    <span className="date-pill-year">{formatDateYear(day)}</span>
-                  </button>
-                ))}
+            <div className="hero-tasklist">
+              <div className="calendar-section">
+                <div className="date-nav">
+                  <button className="date-btn" onClick={() => setDate(addDays(weekStart(date), -7))}>Previous week</button>
+                  <div className="date-pills">
+                    {weekDates(date).filter(day => day <= todayISO()).map(day => (
+                      <button
+                        key={day}
+                        className={`date-pill ${day === date ? 'active' : ''}`}
+                        onClick={() => setDate(day)}
+                      >
+                        <span className="date-pill-day">{formatDateDay(day)}</span>
+                        <span className="date-pill-date">{formatDateMonthDay(day)}</span>
+                        <span className="date-pill-year">{formatDateYear(day)}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button className="date-btn" onClick={() => setDate(todayISO())}>Today</button>
+                </div>
               </div>
-              <button className="date-btn" onClick={() => setDate(todayISO())}>Today</button>
             </div>
           </div>
         </div>
       </div>
 
       <div className="card" style={{ marginTop: '0.5rem', padding: '1.5rem' }}>
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '2px solid #ddd', paddingBottom: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', borderBottom: '2px solid #ddd', paddingBottom: '1rem' }}>
           <button
             className={`btn ${activeTab === 'tasks' ? '' : 'btn-muted'}`}
             style={{
@@ -465,20 +462,56 @@ function App() {
           >
             🎮 Unlock Games
           </button>
+          <button
+            className={`btn ${activeTab === 'report' ? '' : 'btn-muted'}`}
+            style={{
+              backgroundColor: activeTab === 'report' ? '#FF9800' : '#f5f5f5',
+              color: activeTab === 'report' ? '#fff' : '#333',
+              border: 'none',
+              padding: '0.75rem 1.5rem',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: activeTab === 'report' ? 'bold' : 'normal'
+            }}
+            onClick={() => setActiveTab('report')}
+          >
+            📊 Report
+          </button>
+          <div className="score-card score-line score-card-tabs" style={{ marginLeft: 'auto' }}>
+            <div>
+              <div className="muted">Today's score</div>
+              <div className="score" style={{ fontSize: '1.25rem' }}>{pointsEarned} pts</div>
+            </div>
+            <div>
+              <div className="muted">Total points earned</div>
+              <div className="score" style={{ fontSize: '1.25rem' }}>{totalPoints} pts</div>
+            </div>
+            <div>
+              <div className="muted">Points redeemed</div>
+              <div className="score" style={{ fontSize: '1.25rem', color: '#FF9800' }}>{spentPoints} pts</div>
+            </div>
+            <div>
+              <div className="muted">Available balance</div>
+              <div className="score" style={{ fontSize: '1.25rem', color: '#22c55e' }}>{totalPoints - spentPoints} pts</div>
+            </div>
+          </div>
         </div>
 
         {/* Tasks Tab */}
         {activeTab === 'tasks' && (
+          <>
+          <div className="card-header" style={{ marginBottom: '1rem' }}>
+            <div>
+              <div className="section-title">Daily Task List</div>
+              <div className="muted">{completedCount} of {tasks.length} tasks completed</div>
+            </div>
+            <button className="btn btn-danger btn-reset-today" onClick={resetAllForDate}>Reset Today Tasks</button>
+          </div>
           <div className="task-grid">
-            {tasks.map(t => (
+            {[...tasks].sort((a, b) => (a.parentPresence ? 1 : 0) - (b.parentPresence ? 1 : 0)).map(t => (
               <div key={t.id} className={`task task-card ${isDone(t, date) ? 'task-done' : ''}`}>
-                <div>
-                  <div className="task-title">
-                    {formatTaskTitle(t.title)}
-                    {t.parentPresence && (
-                      <span className="parent-icon" title="Do this task in a parent's presence" aria-label="Do this task in a parent's presence">👨‍👩‍👧</span>
-                    )}
-                  </div>
+                <div className="task-main">
+                  <div className="task-title">{formatTaskTitle(t.title)}</div>
                   <div className="muted">{t.description}</div>
                 </div>
                 <div className="task-right">
@@ -491,9 +524,15 @@ function App() {
                     <span className="toggle-thumb" />
                   </button>
                 </div>
+                <div className="task-parent-col">
+                  {t.parentPresence && (
+                    <span className="parent-icon" title="Do this task in a parent's presence" aria-label="Do this task in a parent's presence">👨‍👩‍👧</span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
+          </>
         )}
 
         {/* Games Tab: replaced with user-provided embeds */}
@@ -561,7 +600,63 @@ function App() {
                   </div>
                 )}
               </div>
+
+              {/* Embed 3 */}
+              <div className="card" style={{ padding: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <div style={{ fontWeight: 'bold' }}>Chess Game</div>
+                  {unlockedGames['Chess Game'] && (
+                    <button className="btn btn-muted" style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }} onClick={() => enterFullscreen(chessRef)}>
+                      Fullscreen
+                    </button>
+                  )}
+                </div>
+                {unlockedGames['Chess Game'] ? (
+                  <div style={{ border: '1px solid #ddd', padding: '0.5rem', borderRadius: '6px' }}>
+                    <iframe ref={chessRef} src="https://scratch.mit.edu/projects/148769358/embed" title="Chess Game" allowtransparency="true" width="485" height="402" frameBorder="0" scrolling="no" allowFullScreen style={{ width: '100%', height: '420px', border: 'none' }} />
+                  </div>
+                ) : (
+                  <div>
+                    <div className="muted" style={{ marginBottom: '0.5rem' }}>Locked — redeem 50 points to unlock this game.</div>
+                    <button
+                      className="btn btn-success"
+                      style={{ width: '100%', cursor: availablePoints < 50 ? 'not-allowed' : 'pointer' }}
+                      onClick={() => redeemPointsForGame('Chess Game')}
+                      disabled={availablePoints < 50}
+                      title={availablePoints < 50 ? 'Need 50 available points to unlock' : 'Unlock for 50 pts'}
+                    >
+                      Unlock for 50 pts
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
+          </div>
+        )}
+
+        {/* Report Tab */}
+        {activeTab === 'report' && (
+          <div>
+            <div className="section-title" style={{ marginBottom: '0.25rem' }}>📊 Points Earned Per Day</div>
+            <div className="muted" style={{ marginBottom: '1.25rem' }}>Total points earned across all tasks, by day.</div>
+            {dailyPoints.length === 0 ? (
+              <div className="muted">No completed tasks yet — finish some tasks to see your progress here.</div>
+            ) : (
+              <div className="bar-chart">
+                {dailyPoints.map(d => (
+                  <div key={d.date} className="bar-col" title={`${d.points} pts on ${d.date}`}>
+                    <div className="bar-value">{d.points}</div>
+                    <div className="bar-track">
+                      <div
+                        className="bar-fill"
+                        style={{ height: `${maxDailyPoints ? (d.points / maxDailyPoints) * 100 : 0}%` }}
+                      />
+                    </div>
+                    <div className="bar-label">{formatDateMonthDay(d.date)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

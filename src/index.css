@@ -1,15 +1,23 @@
 /* Basic styles for Bujjamma Daily Tasks Tracker */
 html, body, #root { height: 100%; margin: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: radial-gradient(circle at top, #eef2ff 0%, #f8fafc 45%, #ffffff 100%); color: #0f172a; }
-.container { max-width: 46rem; margin: 0 auto; padding: 0.75rem 1.25rem 2.5rem; }
+.container { max-width: 100%; margin: 0 auto; padding: 0.75rem 2rem 2.5rem; }
 .sticky-panel { position: sticky; top: 0; z-index: 20; display: grid; gap: 0.85rem; background: rgba(255,255,255,0.94); padding: 0.75rem 0; backdrop-filter: blur(12px); }
-.hero { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.75rem; padding: 0.85rem 0.95rem; border-radius: 1.15rem; background: linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%); color: white; box-shadow: 0 10px 28px rgba(124, 58, 237, 0.18); margin: 0; }
-.hero > div:first-child { flex: 1 1 0; min-width: 0; }
-.hero h1 { margin: 0; font-size: clamp(1.1rem, 1.8vw, 1.3rem); line-height: 1.15; letter-spacing: 0.01em; }
-.hero .muted { color: rgba(255, 255, 255, 0.9); font-size: 0.85rem; }
-.score-card { display: flex; gap: 0.6rem; flex-shrink: 0; }
-.score-card > div { min-width: 0; background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.2); border-radius: 0.95rem; padding: 0.55rem 0.75rem; }
-.score-card .score { margin-top: 0.2rem; font-size: 1.1rem; font-weight: 800; letter-spacing: -0.04em; }
+.hero { display: flex; flex-direction: column; gap: 0.55rem; padding: 0.6rem 0.7rem; border-radius: 0.9rem; background: linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%); color: white; box-shadow: 0 8px 22px rgba(124, 58, 237, 0.18); margin: 0; }
+.hero-top { display: flex; flex-wrap: nowrap; justify-content: space-between; align-items: center; gap: 0.75rem; }
+.hero-title { flex: 0 1 auto; min-width: 0; text-align: left; }
+.hero-tasklist { flex: 0 0 auto; margin-left: auto; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18); border-radius: 0.75rem; padding: 0.55rem; max-width: 100%; }
+.score-card { flex: 0 0 auto; }
+.hero-tasklist .calendar-section { margin-bottom: 0; padding: 0.55rem; border-radius: 0.7rem; }
+.hero h1 { margin: 0; font-size: clamp(1rem, 1.5vw, 1.15rem); line-height: 1.1; letter-spacing: 0.01em; }
+.hero .muted { color: rgba(255, 255, 255, 0.9); font-size: 0.78rem; }
+.score-card { display: flex; gap: 0.45rem; flex-shrink: 0; }
+.score-card > div { min-width: 0; background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.2); border-radius: 0.7rem; padding: 0.4rem 0.6rem; }
+.score-card .score { margin-top: 0.1rem; font-size: 0.95rem; font-weight: 800; letter-spacing: -0.04em; }
+.score-card-tabs { flex-wrap: wrap; }
+.score-card-tabs > div { background: #f8fafc; border-color: #e5e7eb; }
+.score-card-tabs .muted { color: #64748b; }
+.score-card-tabs .score { color: #0f172a; }
 .card-top { border-radius: 1.15rem; box-shadow: 0 14px 34px rgba(15, 23, 42, 0.07); margin: 0 0 0.85rem; }
 .card { background: rgba(255, 255, 255, 0.95); border-radius: 1.25rem; box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08); padding: 1.1rem; backdrop-filter: blur(10px); }
 .card-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 1rem; }
@@ -17,8 +25,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helv
 .calendar-section { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 1.25rem; padding: 1rem; margin-bottom: 1.1rem; }
 .calendar-header { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; margin-bottom: 0.9rem; }
 .calendar-header .muted { margin: 0; color: #64748b; }
-.date-nav { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; justify-content: space-between; }
-.date-btn { min-width: 4.4rem; padding: 0.65rem 0.85rem; border: none; border-radius: 0.95rem; background: #f8fafc; color: #0f172a; font-weight: 700; box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08); cursor: pointer; }
+.date-nav { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; justify-content: flex-start; }
+.date-btn { min-width: 3.4rem; padding: 0.4rem 0.6rem; border: none; border-radius: 0.7rem; background: #f8fafc; color: #0f172a; font-weight: 700; font-size: 0.78rem; box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08); cursor: pointer; }
 .date-btn:hover { background: #eff6ff; }
 .btn { display: inline-flex; align-items: center; justify-content: center; padding: 0.65rem 1rem; border-radius: 999px; background: #2563eb; color: white; border: none; cursor: pointer; font-weight: 700; transition: transform 0.15s ease, background-color 0.15s ease; }
 .btn:hover { transform: translateY(-1px); }
@@ -32,13 +40,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helv
 }
 .btn-reset-today { background: linear-gradient(135deg, #fb923c, #f97316); color: white; border: none; box-shadow: 0 10px 22px rgba(251, 146, 60, 0.2); }
 .btn-reset-today:hover { background: linear-gradient(135deg, #f97316, #ef4444); }
-.date-pills { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.5rem; flex: 1; }
-.date-pill { border: 1px solid #e2e8f0; padding: 0.6rem 0.75rem; border-radius: 1.15rem; background: #f8fafc; color: #0f172a; min-width: 0; text-align: center; box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04); cursor: pointer; transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease; display: grid; gap: 0.1rem; }
+.date-pills { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.date-pills .date-pill { min-width: 3.4rem; }
+.date-pill { border: 1px solid #e2e8f0; padding: 0.35rem 0.4rem; border-radius: 0.7rem; background: #f8fafc; color: #0f172a; min-width: 0; text-align: center; box-shadow: 0 4px 10px rgba(15, 23, 42, 0.04); cursor: pointer; transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease; display: grid; gap: 0.05rem; }
 .date-pill:hover { transform: translateY(-1px); }
-.date-pill.active { background: #0ea5e9; color: white; border-color: #0ea5e9; box-shadow: 0 12px 24px rgba(14, 165, 233, 0.18); }
-.date-pill-day { display: block; font-size: 0.72rem; font-weight: 700; }
-.date-pill-date { display: block; font-size: 0.82rem; color: inherit; }
-.date-pill-year { display: block; font-size: 0.72rem; color: inherit; opacity: 0.8; }
+.date-pill.active { background: #0ea5e9; color: white; border-color: #0ea5e9; box-shadow: 0 8px 16px rgba(14, 165, 233, 0.18); }
+.date-pill-day { display: block; font-size: 0.62rem; font-weight: 700; }
+.date-pill-date { display: block; font-size: 0.72rem; color: inherit; }
+.date-pill-year { display: block; font-size: 0.6rem; color: inherit; opacity: 0.8; }
 .task-grid {
   display: grid;
   gap: 0.85rem;
@@ -46,15 +55,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helv
 }
 .task { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 1.1rem; padding: 0.85rem; box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06); transition: transform 0.2s ease, box-shadow 0.2s ease; }
 .task:hover { transform: translateY(-1px); box-shadow: 0 12px 20px rgba(15, 23, 42, 0.08); }
+@media (min-width: 1400px) {
+  .task-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
 @media (max-width: 960px) {
   .task-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
   .task-grid { grid-template-columns: 1fr; }
 }
-.task-card { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; flex-wrap: wrap; }
+.task-card { display: flex; align-items: center; gap: 0.6rem; flex-wrap: nowrap; }
+.task-main { flex: 1 1 auto; min-width: 0; }
 .task-title { font-weight: 700; margin-bottom: 0.1rem; font-size: 0.95rem; }
-.parent-icon { margin-left: 0.4rem; font-size: 1rem; cursor: help; vertical-align: middle; }
+.task-parent-col { flex: 0 0 auto; width: 1.9rem; display: flex; align-items: center; justify-content: center; }
+.parent-icon { font-size: 1.15rem; cursor: help; }
 .task-badge { display: inline-flex; align-items: center; justify-content: center; margin-bottom: 0.25rem; padding: 0.3rem 0.65rem; border-radius: 999px; background: #ede9fe; color: #7c3aed; font-weight: 700; font-size: 0.82rem; }
 .task-right { display: flex; align-items: center; gap: 0.65rem; }
 .toggle-switch { width: 3rem; height: 1.6rem; border-radius: 999px; background: #cbd5e1; border: none; position: relative; cursor: pointer; transition: background-color 0.2s ease; }
@@ -62,6 +76,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helv
 .toggle-switch.on { background: #22c55e; }
 .toggle-switch.on .toggle-thumb { transform: translateX(1.35rem); }
 .muted { color: #64748b; font-size: 0.92rem; }
+.bar-chart { display: flex; align-items: flex-end; gap: 0.6rem; overflow-x: auto; padding: 0.5rem 0.25rem 0; min-height: 260px; }
+.bar-col { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; min-width: 48px; flex: 1 1 0; }
+.bar-value { font-size: 0.8rem; font-weight: 700; color: #7c3aed; }
+.bar-track { width: 100%; max-width: 46px; height: 200px; display: flex; align-items: flex-end; background: #f1f5f9; border-radius: 0.5rem; overflow: hidden; }
+.bar-fill { width: 100%; min-height: 4px; background: linear-gradient(180deg, #8b5cf6 0%, #7c3aed 100%); border-radius: 0.5rem 0.5rem 0 0; transition: height 0.3s ease; }
+.bar-label { font-size: 0.72rem; color: #64748b; white-space: nowrap; }
 input[type='date'] { padding: 0.75rem 0.85rem; border-radius: 0.75rem; border: 1px solid #cbd5e1; background: white; color: #0f172a; }
 @media (max-width: 640px) {
   .hero { text-align: center; }
