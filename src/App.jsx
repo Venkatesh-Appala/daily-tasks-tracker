@@ -71,17 +71,57 @@ function uuid() {
     : `id-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
 }
 
+// 3-way merge of an id-keyed collection so a save preserves changes made
+// elsewhere (dashboard / scripts / another device) while still applying this
+// session's edits, additions and deletions.
+//  - baseline: the collection as this session last loaded/saved it
+//  - current:  the collection in app state now (our edits)
+//  - theirs:   the freshly-fetched collection (may contain external changes)
+function mergeCollection(baseline, current, theirs, idKey = 'id') {
+  const baselineById = new Map((baseline || []).map(x => [x[idKey], x]))
+  const currentById = new Map((current || []).map(x => [x[idKey], x]))
+  const theirsById = new Map((theirs || []).map(x => [x[idKey], x]))
+  const result = []
+  for (const t of theirs || []) {
+    const id = t[idKey]
+    const inBaseline = baselineById.has(id)
+    const inCurrent = currentById.has(id)
+    if (inBaseline && !inCurrent) continue // we deleted it → respect deletion
+    if (inCurrent) {
+      const cur = currentById.get(id)
+      const bl = baselineById.get(id)
+      const weModified = !bl || JSON.stringify(cur) !== JSON.stringify(bl)
+      result.push(weModified ? cur : t) // prefer our edit, else keep theirs
+    } else {
+      result.push(t) // external addition (or unchanged) → keep
+    }
+  }
+  for (const c of current || []) {
+    const id = c[idKey]
+    if (!baselineById.has(id) && !theirsById.has(id)) result.push(c) // our new item
+  }
+  return result
+}
+
+// How long a game stays playable after a kid unlocks it.
+const GAME_MINUTES = 5
+const GAME_DURATION_MS = GAME_MINUTES * 60 * 1000
+
 function App() {
   const [tasks, setTasks] = useState([])
   const [date, setDate] = useState(todayISO())
   const [activeTab, setActiveTab] = useState('tasks')
+  // Per-kid game unlocks: { [gameId]: unlockTimestampMs }. A game is playable
+  // for GAME_DURATION_MS after its timestamp; the timestamp also marks it "played".
   const [unlockedGames, setUnlockedGames] = useState({})
+  const [now, setNow] = useState(() => Date.now())
   const [spentPoints, setSpentPoints] = useState(0)
 
   // Parents own a task library and a set of kids. The app is parent-login-first.
   const [parents, setParents] = useState([])
   const [activeParentId, setActiveParentId] = useState(null)
   const [allTasks, setAllTasks] = useState([]) // full task library (all parents)
+  const [allGames, setAllGames] = useState([]) // game links (all parents)
   const [children, setChildren] = useState([])
   const [activeChildId, setActiveChildId] = useState(null)
 
@@ -107,6 +147,9 @@ function App() {
   // preserve fields/other children we don't actively edit. canSyncRef gates writes
   // so we never overwrite the cloud with local-only data we failed to read.
   const cloudRecordRef = useRef({ children: [], progress: {} })
+  // The record as this session last loaded/saved it — the baseline for 3-way
+  // merges so concurrent external edits aren't clobbered.
+  const loadedRecordRef = useRef({})
   const canSyncRef = useRef(false)
   const saveTimerRef = useRef(null)
   const [tictacToe, setTictacToe] = useState(Array(9).fill(null))
@@ -157,7 +200,10 @@ function App() {
         try {
           record = await fetchCloud()
           canSyncRef.current = true // read succeeded — safe to write back
-          if (record && typeof record === 'object') cloudRecordRef.current = record
+          if (record && typeof record === 'object') {
+            cloudRecordRef.current = record
+            loadedRecordRef.current = record
+          }
         } catch (error) {
           // Couldn't read the cloud — stay read-only this session so we don't
           // overwrite good cloud data. With no local cache, nothing loads until
@@ -172,6 +218,7 @@ function App() {
       setAllTasks(
         (record && Array.isArray(record.tasks) ? record.tasks : []).map(({ required, ...t }) => t)
       )
+      setAllGames(record && Array.isArray(record.games) ? record.games : [])
       setChildren(record && Array.isArray(record.children) ? record.children : [])
       setActiveParentId(null)
       setActiveChildId(null)
@@ -192,13 +239,25 @@ function App() {
   useEffect(() => {
     if (!SYNC_ENABLED || !canSyncRef.current) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(() => {
-      const prev = cloudRecordRef.current || {}
-      const progress = { ...(prev.progress || {}) }
+    saveTimerRef.current = setTimeout(async () => {
+      // Read-before-write: fetch the latest so external changes (dashboard,
+      // scripts, other devices) become the base we merge our edits onto.
+      let base = cloudRecordRef.current || {}
+      try {
+        const latest = await fetchCloud()
+        if (latest && typeof latest === 'object') base = latest
+      } catch (error) {
+        console.warn('Could not refresh before save; using last known record', error)
+      }
+      const baseline = loadedRecordRef.current || {}
+      const mergedParents = mergeCollection(baseline.parents, parents, base.parents)
+      const mergedTasks = mergeCollection(baseline.tasks, allTasks, base.tasks)
+      const mergedGames = mergeCollection(baseline.games, allGames, base.games)
+      const mergedChildren = mergeCollection(baseline.children, children, base.children)
+
+      // Other kids' progress comes from the fresh base; overlay the active kid's.
+      const progress = { ...(base.progress || {}) }
       if (activeChildId) {
-        // Update the active kid's completion. Keep history for any task that is
-        // not currently in their assigned view (so un-assigning then re-assigning
-        // a task doesn't lose its past completions).
         const newDates = { ...(progress[activeChildId]?.completedDates || {}) }
         tasks.forEach(t => {
           if (Array.isArray(t.completedDates) && t.completedDates.length) newDates[t.id] = t.completedDates
@@ -207,22 +266,35 @@ function App() {
         progress[activeChildId] = {
           completedDates: newDates,
           spentPoints,
+          unlockedGames,
           stats: computeStats(tasks, spentPoints)
         }
       }
-      const record = { ...prev, parents, tasks: allTasks, children, progress }
+
+      const record = {
+        ...base, // preserves external-only fields (starterTasks, starterGames, …)
+        parents: mergedParents,
+        tasks: mergedTasks,
+        games: mergedGames,
+        children: mergedChildren,
+        progress
+      }
       cloudRecordRef.current = record
+      loadedRecordRef.current = record // advance baseline to what we just wrote
       pushCloud(record).catch(error => console.warn('Cloud sync failed', error))
     }, 1500)
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     }
-  }, [tasks, spentPoints, children, activeChildId, parents, allTasks])
+  }, [tasks, spentPoints, unlockedGames, children, activeChildId, parents, allTasks, allGames])
 
-  // Games start locked each session; unlock via redeemPointsForGame.
+  // Tick every second while the Games tab is open, so countdowns update live.
   useEffect(() => {
-    setUnlockedGames({})
-  }, [])
+    if (activeTab !== 'games') return
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [activeTab])
 
   const isDone = (task, dateStr) => {
     if (!task) return false
@@ -249,13 +321,16 @@ function App() {
   }
 
   // Redeem points to unlock games (costs 50 pts per unlock)
-  const redeemPointsForGame = gameName => {
+  const redeemPointsForGame = game => {
+    const gameName = game.name
     const availablePoints = totalPoints - spentPoints
     if (availablePoints >= 50) {
-      // Deduct points by marking for "redemption"
-      setUnlockedGames(prev => ({ ...prev, [gameName]: true }))
+      // Store the unlock time: the game is playable for GAME_MINUTES from now.
+      const ts = Date.now()
+      setUnlockedGames(prev => ({ ...prev, [game.id]: ts }))
+      setNow(ts)
       setSpentPoints(prev => prev + 50)
-      alert(`Unlocked ${gameName}! 50 points redeemed.`)
+      alert(`Unlocked ${gameName} for ${GAME_MINUTES} minutes! 50 points redeemed.`)
     } else {
       alert(`Need 50 points to unlock ${gameName}. You have ${availablePoints} pts available.`)
     }
@@ -380,6 +455,7 @@ function App() {
   // Kids and task library scoped to the logged-in parent.
   const parentChildren = children.filter(c => c.parentId === activeParentId)
   const parentTaskLibrary = allTasks.filter(t => t.parentId === activeParentId)
+  const parentGames = allGames.filter(g => g.parentId === activeParentId)
   // Only kids with a name appear in the selector (no "Unnamed kid" entries).
   const namedChildren = parentChildren.filter(c => c.name && c.name.trim())
 
@@ -400,6 +476,7 @@ function App() {
     setActiveChildId(null)
     setTasks([])
     setSpentPoints(0)
+    setUnlockedGames({})
     setActiveTab('tasks')
     // Admin starts locked each login; the parent PIN unlocks it. A parent with
     // no PIN has nothing to verify, so Admin is open for them.
@@ -434,6 +511,7 @@ function App() {
     setSpentPoints(0)
     setLoginParentId('')
     setParentPinInput('')
+    setUnlockedGames({})
     setActiveTab('tasks')
     setAdminUnlocked(false)
     setAdminPinInput('')
@@ -529,6 +607,7 @@ function App() {
     setActiveChildId(childId)
     setTasks(assigned.map(t => ({ ...t, completedDates: cmap[t.id] || [] })))
     setSpentPoints(Number(prog.spentPoints) || 0)
+    setUnlockedGames(prog.unlockedGames || {})
   }
 
   // ---- Admin: manage kids ----
@@ -550,6 +629,7 @@ function App() {
       setActiveChildId(null)
       setTasks([])
       setSpentPoints(0)
+      setUnlockedGames({})
     }
   }
 
@@ -575,10 +655,47 @@ function App() {
     ])
   }
 
+  // Load the starter tasks (template lives in the bin under `starterTasks`) into
+  // this parent's library, skipping any already present (matched by title).
+  const loadStarterTasks = () => {
+    const templates = (cloudRecordRef.current && cloudRecordRef.current.starterTasks) || []
+    const existing = new Set(parentTaskLibrary.map(t => (t.title || '').trim().toLowerCase()))
+    let maxId = allTasks.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0)
+    const toAdd = templates
+      .filter(t => t.title && !existing.has(t.title.trim().toLowerCase()))
+      .map(t => ({ parentPresence: false, ...t, id: ++maxId, parentId: activeParentId }))
+    if (toAdd.length === 0) return
+    setAllTasks(ts => [...ts, ...toAdd])
+  }
+
   const removeTaskDef = id => {
     if (!window.confirm('Remove this task? It will be unassigned from all kids.')) return
     setAllTasks(ts => ts.filter(t => t.id !== id))
     setChildren(cs => cs.map(c => ({ ...c, taskIds: (c.taskIds || []).filter(x => x !== id) })))
+  }
+
+  // ---- Admin: manage the parent's game links ----
+  const updateGameDef = (id, patch) =>
+    setAllGames(gs => gs.map(g => (g.id === id ? { ...g, ...patch } : g)))
+
+  const addGameDef = () =>
+    setAllGames(gs => [...gs, { id: uuid(), parentId: activeParentId, name: 'New Game', emoji: '🎮', url: '' }])
+
+  // Load the starter games (template lives in the bin under `starterGames`) into
+  // this parent's library, skipping any already present (matched by URL).
+  const loadStarterGames = () => {
+    const templates = (cloudRecordRef.current && cloudRecordRef.current.starterGames) || []
+    const existingUrls = new Set(parentGames.map(g => g.url))
+    const toAdd = templates
+      .filter(g => g.url && !existingUrls.has(g.url))
+      .map(g => ({ ...g, id: uuid(), parentId: activeParentId }))
+    if (toAdd.length === 0) return
+    setAllGames(gs => [...gs, ...toAdd])
+  }
+
+  const removeGameDef = id => {
+    if (!window.confirm('Remove this game link?')) return
+    setAllGames(gs => gs.filter(g => g.id !== id))
   }
 
   // Keep the browser tab title in sync with the selected kid / parent.
@@ -981,54 +1098,65 @@ function App() {
           <div>
             <div className="section-title" style={{ marginBottom: '1rem' }}>🎮 Games</div>
             <div className="muted" style={{ marginBottom: '0.5rem' }}>Unlock a game with 50 points, then open it on the website to play.</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem' }}>
-              {[
-                { name: 'Make a House', emoji: '🏠', url: 'https://www.abcya.com/games/make-a-house' },
-                { name: 'Punctuation & Capitalization', emoji: '✏️', url: 'https://www.abcya.com/games/fun-factory-punctuation-capitalization' },
-                { name: 'Lineum', emoji: '📐', url: 'https://www.abcya.com/games/lineum' },
-                { name: 'Addition', emoji: '➕', url: 'https://www.abcya.com/games/addition' },
-                { name: 'Estimating', emoji: '🔢', url: 'https://www.abcya.com/games/estimating' },
-                { name: 'Build a Boat', emoji: '⛵', url: 'https://pbskids.org/games/play/build-a-boat/1283064' },
-                { name: 'Stargazing', emoji: '🔭', url: 'https://pbskids.org/games/play/stargazing/1670899' },
-                { name: 'My Bedtime', emoji: '🌙', url: 'https://pbskids.org/games/play/my-bedtime/8513' },
-                { name: 'At the Dentist', emoji: '🦷', url: 'https://pbskids.org/games/play/at-the-dentist/836628' },
-                { name: 'Backyard Bug Hunt', emoji: '🐞', url: 'https://pbskids.org/games/play/backyard-bug-hunt/1216876' },
-                { name: 'Ramp Racers', emoji: '🏎️', url: 'https://pbskids.org/games/play/ramp-racers/140182' },
-              ].map(game => (
-                <div key={game.name} className="card" style={{ padding: '1rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
-                    <div style={{ fontWeight: 'bold' }}>{game.emoji} {game.name}</div>
-                  </div>
-                  {unlockedGames[game.name] ? (
-                    <div>
-                      <div className="muted" style={{ marginBottom: '0.5rem' }}>Unlocked — opens in a new tab.</div>
-                      <a
-                        href={game.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn btn-success"
-                        style={{ display: 'block', width: '100%', textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}
-                      >
-                        ▶ Play on website
-                      </a>
+            {parentGames.length === 0 ? (
+              <div className="muted">No games yet — add some in the ⚙️ Admin tab.</div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem' }}>
+                {parentGames.map(game => {
+                  const unlockedAt = unlockedGames[game.id]
+                  const everPlayed = !!unlockedAt
+                  const remaining = unlockedAt ? GAME_DURATION_MS - (now - unlockedAt) : 0
+                  const active = remaining > 0
+                  const mm = Math.floor(remaining / 60000)
+                  const ss = Math.floor((remaining % 60000) / 1000)
+                  return (
+                    <div key={game.id} className="card" style={{ padding: '1rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                        <div style={{ fontWeight: 'bold' }}>{game.emoji} {game.name}</div>
+                        {everPlayed && (
+                          <span title="Already played" style={{ fontSize: '0.72rem', fontWeight: 'bold', color: '#16a34a', background: '#dcfce7', borderRadius: '999px', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}>
+                            ✅ Played
+                          </span>
+                        )}
+                      </div>
+                      {active ? (
+                        <div>
+                          <div style={{ marginBottom: '0.5rem', fontWeight: 'bold', color: '#16a34a' }}>
+                            ⏱ {mm}:{String(ss).padStart(2, '0')} left
+                          </div>
+                          <a
+                            href={game.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-success"
+                            style={{ display: 'block', width: '100%', textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}
+                          >
+                            ▶ Play on website
+                          </a>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="muted" style={{ marginBottom: '0.5rem' }}>
+                            {everPlayed
+                              ? `Time's up — unlock again for ${GAME_MINUTES} more minutes (50 pts).`
+                              : `Locked — redeem 50 points for ${GAME_MINUTES} minutes of play.`}
+                          </div>
+                          <button
+                            className="btn btn-success"
+                            style={{ width: '100%', cursor: availablePoints < 50 ? 'not-allowed' : 'pointer' }}
+                            onClick={() => redeemPointsForGame(game)}
+                            disabled={availablePoints < 50}
+                            title={availablePoints < 50 ? 'Need 50 available points to unlock' : 'Unlock for 50 pts'}
+                          >
+                            {everPlayed ? 'Play again — 50 pts' : 'Unlock for 50 pts'}
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <div>
-                      <div className="muted" style={{ marginBottom: '0.5rem' }}>Locked — redeem 50 points to unlock this game.</div>
-                      <button
-                        className="btn btn-success"
-                        style={{ width: '100%', cursor: availablePoints < 50 ? 'not-allowed' : 'pointer' }}
-                        onClick={() => redeemPointsForGame(game.name)}
-                        disabled={availablePoints < 50}
-                        title={availablePoints < 50 ? 'Need 50 available points to unlock' : 'Unlock for 50 pts'}
-                      >
-                        Unlock for 50 pts
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -1164,9 +1292,14 @@ function App() {
             {/* ---- Manage Task Library ---- */}
             <div className="card-header" style={{ marginBottom: '0.75rem' }}>
               <div className="section-title">📋 Task Library</div>
-              <button className="btn" onClick={addTaskDef} style={{ backgroundColor: '#2196F3', color: '#fff', border: 'none', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-                + Add Task
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="btn btn-muted" onClick={loadStarterTasks} style={{ padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer' }}>
+                  Load starter tasks
+                </button>
+                <button className="btn" onClick={addTaskDef} style={{ backgroundColor: '#2196F3', color: '#fff', border: 'none', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
+                  + Add Task
+                </button>
+              </div>
             </div>
             <div className="muted" style={{ marginBottom: '1rem' }}>
               These tasks belong to {activeParent ? activeParent.name : 'this parent'}. Assign them to kids above.
@@ -1194,6 +1327,47 @@ function App() {
                       Parent present
                     </label>
                     <button className="btn btn-danger" onClick={() => removeTaskDef(t.id)} style={{ padding: '0.5rem 0.9rem', borderRadius: '6px', cursor: 'pointer' }}>
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ---- Manage Game Links ---- */}
+            <div className="card-header" style={{ margin: '2rem 0 0.75rem' }}>
+              <div className="section-title">🎮 Game Links</div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="btn btn-muted" onClick={loadStarterGames} style={{ padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer' }}>
+                  Load starter games
+                </button>
+                <button className="btn" onClick={addGameDef} style={{ backgroundColor: '#4CAF50', color: '#fff', border: 'none', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
+                  + Add Game
+                </button>
+              </div>
+            </div>
+            <div className="muted" style={{ marginBottom: '1rem' }}>
+              Games kids can unlock with 50 points. Each opens its link in a new tab.
+            </div>
+            {parentGames.length === 0 ? (
+              <div className="muted">No games yet — click “+ Add Game”.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {parentGames.map(g => (
+                  <div key={g.id} style={{ border: '1px solid #e5e7eb', borderRadius: '10px', padding: '0.85rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: '0 1 70px' }}>
+                      <span className="muted" style={{ fontSize: '0.8rem' }}>Emoji</span>
+                      <input type="text" value={g.emoji || ''} maxLength={4} onChange={e => updateGameDef(g.id, { emoji: e.target.value })} style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #ccc', textAlign: 'center' }} />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: '2 1 160px' }}>
+                      <span className="muted" style={{ fontSize: '0.8rem' }}>Name</span>
+                      <input type="text" value={g.name || ''} onChange={e => updateGameDef(g.id, { name: e.target.value })} style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #ccc' }} />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: '4 1 280px' }}>
+                      <span className="muted" style={{ fontSize: '0.8rem' }}>Link (URL)</span>
+                      <input type="url" value={g.url || ''} placeholder="https://…" onChange={e => updateGameDef(g.id, { url: e.target.value })} style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #ccc' }} />
+                    </label>
+                    <button className="btn btn-danger" onClick={() => removeGameDef(g.id)} style={{ padding: '0.5rem 0.9rem', borderRadius: '6px', cursor: 'pointer' }}>
                       Remove
                     </button>
                   </div>
