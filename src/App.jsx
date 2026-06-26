@@ -202,6 +202,7 @@ function App() {
   const [parentLoginError, setParentLoginError] = useState('')
   const [addingParent, setAddingParent] = useState(false)
   const [parentForm, setParentForm] = useState({ name: '', pin: '' })
+  const [showSetupHelp, setShowSetupHelp] = useState(false)
   // Admin is re-locked behind the parent PIN within a session (so a kid using
   // the tracker can't open it). Unlocked only after the PIN is entered.
   const [adminUnlocked, setAdminUnlocked] = useState(false)
@@ -974,6 +975,27 @@ function App() {
               </button>
             </>
           )}
+
+          <div style={{ marginTop: '1.5rem', borderTop: '1px solid #eee', paddingTop: '1rem', textAlign: 'left' }}>
+            <button
+              onClick={() => setShowSetupHelp(h => !h)}
+              style={{ background: 'none', border: 'none', color: '#6366f1', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', padding: 0 }}
+            >
+              {showSetupHelp ? '▾' : '▸'} 🛠️ How to set up this app for kids
+            </button>
+            {showSetupHelp && (
+              <ol style={{ margin: '0.85rem 0 0', paddingLeft: '1.25rem', color: '#475569', fontSize: '0.88rem', lineHeight: 1.65 }}>
+                <li><strong>Add a parent</strong> — tap “+ Add Parent”, enter a name and a 4-digit PIN.</li>
+                <li><strong>Log in</strong> as that parent (enter the PIN).</li>
+                <li>Open the <strong>⚙️ Admin</strong> tab and enter your PIN to unlock it.</li>
+                <li><strong>Add your kids</strong> under “Manage Kids” — name, age, and an optional kid PIN.</li>
+                <li><strong>Add tasks</strong> under “Task Library”, or tap <strong>Load starter tasks</strong> for a ready-made set.</li>
+                <li><strong>Assign tasks</strong> to each kid by ticking them under that kid.</li>
+                <li><strong>Add games</strong> under “Game Links”, or tap <strong>Load starter games</strong>.</li>
+                <li>Done! Log in, pick a kid, and they check off tasks to earn points and unlock games. 🎉</li>
+              </ol>
+            )}
+          </div>
         </div>
       </div>
     )
