@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+import { SYNC_ENABLED, fetchCloud, pushCloud } from './sync'
 
 function toISODate(date) {
   const year = date.getFullYear()
@@ -70,26 +71,23 @@ function formatTaskTitle(title) {
 const TASKS_URL =
   'https://raw.githubusercontent.com/Venkatesh-Appala/bujjamma-daily-tasks-tracker/main/tasks.json'
 
-// Reconcile task definitions (title/points/description/required/parentPresence) from
-// `defaults` with the per-day completion tracking kept in `stored`, matched by stable id.
-function reconcileTasks(defaults, stored) {
-  return [
-    ...stored.map(p => {
-      const def = defaults.find(d => d.id === p.id)
-      return def
-        ? { ...def, completedDates: p.completedDates ?? [], done: p.done }
-        : p // custom task not in defaults — leave untouched
-    }),
-    ...defaults.filter(d => !stored.some(p => p.id === d.id))
-  ]
-}
-
 function App() {
   const [tasks, setTasks] = useState([])
   const [date, setDate] = useState(todayISO())
   const [activeTab, setActiveTab] = useState('tasks')
   const [unlockedGames, setUnlockedGames] = useState({})
   const [spentPoints, setSpentPoints] = useState(0)
+
+  // Child profiles (name/age). One child today; the shape supports several later.
+  const [children, setChildren] = useState([])
+  const [activeChildId, setActiveChildId] = useState(null)
+
+  // Cloud-sync bookkeeping. cloudRecordRef holds the last full document so writes
+  // preserve fields/other children we don't actively edit. canSyncRef gates writes
+  // so we never overwrite the cloud with local-only data we failed to read.
+  const cloudRecordRef = useRef({ children: [], progress: {} })
+  const canSyncRef = useRef(false)
+  const saveTimerRef = useRef(null)
   const [tictacToe, setTictacToe] = useState(Array(9).fill(null))
   const [tictacToeWinner, setTictacToeWinner] = useState(null)
 
@@ -174,55 +172,172 @@ function App() {
     })
   }
 
+  // Read this device's existing completion history out of localStorage as a
+  // { [taskId]: dates[] } map (used for offline use and first-run cloud migration).
+  const readLocalCompletion = () => {
+    const map = {}
+    const stored = localStorage.getItem('tasks')
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed)) {
+          parsed.forEach(p => {
+            if (Array.isArray(p.completedDates) && p.completedDates.length) map[p.id] = p.completedDates
+          })
+        }
+      } catch (error) {
+        console.warn('Invalid saved tasks in storage', error)
+      }
+    }
+    return map
+  }
+
+  const unionDates = (a = [], b = []) => Array.from(new Set([...a, ...b])).sort()
+
+  // Collect the active child's completion history from the live `tasks` array.
+  const completionFromTasks = ts => {
+    const map = {}
+    ts.forEach(t => {
+      if (Array.isArray(t.completedDates) && t.completedDates.length) map[t.id] = t.completedDates
+    })
+    return map
+  }
+
+  // Snapshot the score metrics so they're readable directly from the bin. These
+  // are derived from completedDates + spentPoints; `todayScore` is for the actual
+  // current day (not the date being browsed), so it's stable across devices.
+  const computeStats = (ts, spent) => {
+    const today = todayISO()
+    let total = 0
+    let todayScore = 0
+    ts.forEach(t => {
+      const dates = Array.isArray(t.completedDates) ? t.completedDates : []
+      total += dates.length * (t.points || 0)
+      if (dates.includes(today)) todayScore += t.points || 0
+    })
+    return {
+      todayScore,
+      totalPoints: total,
+      spentPoints: spent,
+      availableBalance: total - spent,
+      updatedAt: new Date().toISOString()
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
 
-    // Apply a set of task definitions: reconcile with stored completion tracking
-    // if present, otherwise seed from the definitions directly.
-    const applyDefaults = defaults => {
+    const init = async () => {
+      // 1. Task definitions: remote tasks.json with the bundled list as fallback.
+      let defaults = getDefaultTasks()
+      try {
+        const res = await fetch(TASKS_URL, { cache: 'no-store' })
+        if (res.ok) {
+          const remote = await res.json()
+          if (Array.isArray(remote) && remote.length > 0) defaults = remote
+        }
+      } catch (error) {
+        console.warn('Could not load remote tasks.json, using bundled fallback', error)
+      }
       if (cancelled) return
-      const stored = localStorage.getItem('tasks')
-      if (stored) {
+
+      // 2. This device's existing progress (for migration + offline).
+      const localMap = readLocalCompletion()
+      const localSpent = Number(localStorage.getItem('spentPoints')) || 0
+
+      // 3. Cloud progress + child profiles.
+      let kids = []
+      let activeId = null
+      let cloudMap = {}
+      let cloudSpent = null
+      if (SYNC_ENABLED) {
         try {
-          const parsed = JSON.parse(stored)
-          if (Array.isArray(parsed)) {
-            // Definition fields always come from the (remote or fallback) defaults,
-            // while tracking (completedDates) is kept from storage. Matched by stable
-            // `id`, so editing task text updates all devices without losing history.
-            const merged = reconcileTasks(defaults, parsed)
-            setTasks(merged)
-            // ensure nextTaskId is initialized
-            if (!localStorage.getItem('nextTaskId')) {
-              const maxId = merged.reduce((m, t) => Math.max(m, t.id), 0)
-              localStorage.setItem('nextTaskId', String(maxId + 1))
+          const record = await fetchCloud()
+          canSyncRef.current = true // read succeeded — safe to write back
+          if (record && typeof record === 'object') {
+            cloudRecordRef.current = record
+            kids = Array.isArray(record.children) ? record.children : []
+            activeId = record.activeChildId || (kids[0] && kids[0].id) || null
+            const prog = activeId && record.progress ? record.progress[activeId] : null
+            if (prog) {
+              cloudMap = prog.completedDates || {}
+              cloudSpent = Number(prog.spentPoints) || 0
             }
-            return
           }
         } catch (error) {
-          console.warn('Invalid saved tasks, resetting sample tasks', error)
+          // Couldn't read the cloud — stay read-only this session so we don't
+          // overwrite good cloud data with local-only state.
+          console.warn('Could not load cloud data, using local only', error)
         }
       }
-      setTasks(defaults)
-      const maxId = defaults.reduce((m, t) => Math.max(m, t.id), 0)
-      localStorage.setItem('nextTaskId', String(maxId + 1))
+      if (cancelled) return
+
+      // 4. First run (no child yet): seed one from this device's data. Name/age
+      //    are left blank for the parent to fill in the Kids tab.
+      if (!activeId) {
+        activeId = 'child-1'
+        kids = [{ id: activeId, name: '', age: '' }]
+      }
+
+      // 5. Merge completion (union → never lose history) onto the definitions.
+      const ids = new Set([...Object.keys(localMap), ...Object.keys(cloudMap)])
+      const mergedMap = {}
+      ids.forEach(id => {
+        mergedMap[id] = unionDates(localMap[id], cloudMap[id])
+      })
+      const mergedTasks = defaults.map(d => ({ ...d, completedDates: mergedMap[d.id] || [] }))
+      const mergedSpent = cloudSpent != null ? Math.max(cloudSpent, localSpent) : localSpent
+
+      setChildren(kids)
+      setActiveChildId(activeId)
+      setTasks(mergedTasks)
+      setSpentPoints(mergedSpent)
+
+      if (!localStorage.getItem('nextTaskId')) {
+        const maxId = defaults.reduce((m, t) => Math.max(m, t.id), 0)
+        localStorage.setItem('nextTaskId', String(maxId + 1))
+      }
+
+      // The debounced save effect below picks up these state changes and pushes
+      // the merged state to the cloud — that is what migrates an already-tracking
+      // device's localStorage history up to JSONBin on first run.
     }
 
-    // Fetch the editable task list from GitHub; fall back to the bundled defaults
-    // if the network/file is unavailable (offline, rate-limited, etc.).
-    fetch(TASKS_URL, { cache: 'no-store' })
-      .then(res => (res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status))))
-      .then(remote => {
-        applyDefaults(Array.isArray(remote) && remote.length > 0 ? remote : getDefaultTasks())
-      })
-      .catch(error => {
-        console.warn('Could not load remote tasks.json, using bundled fallback', error)
-        applyDefaults(getDefaultTasks())
-      })
-
+    init()
     return () => {
       cancelled = true
     }
   }, [])
+
+  // Debounced cloud save: whenever progress or child details change (after load),
+  // write the document back to JSONBin ~1.5s after the last change to stay well
+  // within the free request quota. Gated on canSyncRef so a failed initial read
+  // never clobbers existing cloud data.
+  useEffect(() => {
+    if (!SYNC_ENABLED || !canSyncRef.current || !activeChildId) return
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      const prev = cloudRecordRef.current || {}
+      const record = {
+        ...prev,
+        children,
+        activeChildId,
+        progress: {
+          ...(prev.progress || {}),
+          [activeChildId]: {
+            completedDates: completionFromTasks(tasks),
+            spentPoints,
+            stats: computeStats(tasks, spentPoints)
+          }
+        }
+      }
+      cloudRecordRef.current = record
+      pushCloud(record).catch(error => console.warn('Cloud sync failed', error))
+    }, 1500)
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    }
+  }, [tasks, spentPoints, children, activeChildId])
 
   // Load spent points from localStorage
   useEffect(() => {
@@ -395,6 +510,12 @@ function App() {
     setTictacToeWinner(null)
   }
 
+  const activeChild = children.find(c => c.id === activeChildId) || null
+  const childName = (activeChild && activeChild.name && activeChild.name.trim()) || ''
+  const updateActiveChild = (field, value) => {
+    setChildren(cs => cs.map(c => (c.id === activeChildId ? { ...c, [field]: value } : c)))
+  }
+
   const conversionRate = 100 // 100 points = $1
   const pointsEarned = tasks.reduce((sum, t) => (isDone(t, date) ? sum + (t.points || 0) : sum), 0)
   const totalPoints = tasks.reduce((sum, t) => sum + (Array.isArray(t.completedDates) ? t.completedDates.length * (t.points || 0) : 0), 0)
@@ -462,7 +583,7 @@ function App() {
         <div className="hero">
           <div className="hero-top">
             <div className="hero-title">
-              <h1>Bujjamma Daily Tasks Tracker</h1>
+              <h1>{childName ? `${childName}'s Daily Tasks Tracker` : 'Bujjamma Daily Tasks Tracker'}</h1>
               <p className="muted">Choose a date, complete your tasks, and earn points for every good action.</p>
             </div>
 
@@ -537,6 +658,21 @@ function App() {
             onClick={() => setActiveTab('report')}
           >
             📊 Report
+          </button>
+          <button
+            className={`btn ${activeTab === 'kids' ? '' : 'btn-muted'}`}
+            style={{
+              backgroundColor: activeTab === 'kids' ? '#9C27B0' : '#f5f5f5',
+              color: activeTab === 'kids' ? '#fff' : '#333',
+              border: 'none',
+              padding: '0.75rem 1.5rem',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: activeTab === 'kids' ? 'bold' : 'normal'
+            }}
+            onClick={() => setActiveTab('kids')}
+          >
+            👧 Kid Details
           </button>
           <div className="score-card score-line score-card-tabs" style={{ marginLeft: 'auto' }}>
             <div>
@@ -684,6 +820,49 @@ function App() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* Kid Details Tab */}
+        {activeTab === 'kids' && (
+          <div>
+            <div className="section-title" style={{ marginBottom: '0.25rem' }}>👧 Kid Details</div>
+            <div className="muted" style={{ marginBottom: '1.25rem' }}>
+              Add the child's name and age. These sync across devices along with their progress.
+            </div>
+            {activeChild ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '420px' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                  <span className="muted">Name</span>
+                  <input
+                    type="text"
+                    value={activeChild.name || ''}
+                    placeholder="Enter child's name"
+                    onChange={e => updateActiveChild('name', e.target.value)}
+                    style={{ padding: '0.6rem', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem' }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                  <span className="muted">Age</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="25"
+                    value={activeChild.age ?? ''}
+                    placeholder="Enter age"
+                    onChange={e => updateActiveChild('age', e.target.value)}
+                    style={{ padding: '0.6rem', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem' }}
+                  />
+                </label>
+                <div className="muted" style={{ fontSize: '0.85rem' }}>
+                  {SYNC_ENABLED
+                    ? '✓ Saved automatically to the cloud and synced across devices.'
+                    : '⚠ Cloud sync is off — details are saved on this device only.'}
+                </div>
+              </div>
+            ) : (
+              <div className="muted">Loading…</div>
             )}
           </div>
         )}
